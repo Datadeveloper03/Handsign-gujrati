@@ -50,21 +50,23 @@ gujarati_alphabet = [
 
 # Load a font that supports Gujarati script
 def load_font(size=32):
-    font_path = "gujarati_font.ttf"  # Update this path
-
-    if not os.path.isfile(font_path):
-        print(f"Font file not found: {font_path}")
-        # Try to use a fallback font that might support Gujarati
-        try:
-            return ImageFont.truetype("arial.ttf", size)
-        except:
-            return ImageFont.load_default()
-
-    try:
-        return ImageFont.truetype(font_path, size)
-    except OSError as e:
-        print(f"Error loading font: {e}")
-        return ImageFont.load_default()
+    # Try multiple possible font paths
+    font_paths = [
+        "gujarati_font.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",  # Common Linux path
+        "/System/Library/Fonts/Symbol.ttf",  # macOS
+        "C:/Windows/Fonts/arial.ttf"  # Windows
+    ]
+    
+    for font_path in font_paths:
+        if os.path.isfile(font_path):
+            try:
+                return ImageFont.truetype(font_path, size)
+            except OSError:
+                continue
+    
+    print("No suitable font found, using default")
+    return ImageFont.load_default()
 
 # Functions for processing landmarks
 def calc_landmark_list(image, landmarks):
@@ -99,6 +101,18 @@ def pre_process_landmark(landmark_list):
 # Generate video frames for live prediction
 def generate_frames():
     cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open camera.")
+        # Return a blank frame if camera can't be opened
+        blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(blank_frame, "Camera not available", (50, 240), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        ret, buffer = cv2.imencode('.jpg', blank_frame)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        return
+    
     font = load_font(32)
     small_font = load_font(20)
     
@@ -116,6 +130,7 @@ def generate_frames():
         while True:
             success, frame = cap.read()
             if not success:
+                print("Failed to read frame from camera")
                 break
 
             frame = cv2.flip(frame, 1)
@@ -135,35 +150,46 @@ def generate_frames():
                 for hand_landmarks in results.multi_hand_landmarks:
                     landmark_list = calc_landmark_list(debug_image, hand_landmarks)
                     pre_processed_landmark_list = pre_process_landmark(landmark_list)
-                    df = pd.DataFrame(pre_processed_landmark_list).transpose()
-
-                    # Predict the sign language using the trained model
-                    if model is not None:
-                        predictions = model.predict(df, verbose=0)
-                        predicted_classes = np.argmax(predictions, axis=1)
-                        confidence = np.max(predictions)
-                        current_prediction = gujarati_alphabet[predicted_classes[0]]
-                    else:
-                        # Demo mode with dummy predictions
-                        current_prediction = "અ"
-                        confidence = 0.8
-
-                    # Stabilize predictions using a buffer
-                    prediction_buffer.append(current_prediction)
-                    if len(prediction_buffer) > buffer_size:
-                        prediction_buffer.pop(0)
                     
-                    # Get the most frequent prediction in the buffer
-                    if prediction_buffer:
-                        stable_pred = max(set(prediction_buffer), key=prediction_buffer.count)
-                        if stable_pred != current_stable_prediction:
-                            current_stable_prediction = stable_pred
-                    
-                    # Draw the hand landmarks on the image
-                    mp_drawing.draw_landmarks(
-                        image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                        mp_drawing_styles.get_default_hand_landmarks_style(),
-                        mp_drawing_styles.get_default_hand_connections_style())
+                    # Ensure we have the right number of landmarks
+                    if len(pre_processed_landmark_list) == 42:  # 21 landmarks * 2 (x,y)
+                        df = pd.DataFrame([pre_processed_landmark_list])
+
+                        # Predict the sign language using the trained model
+                        if model is not None:
+                            try:
+                                predictions = model.predict(df, verbose=0)
+                                predicted_classes = np.argmax(predictions, axis=1)
+                                confidence = np.max(predictions)
+                                if predicted_classes[0] < len(gujarati_alphabet):
+                                    current_prediction = gujarati_alphabet[predicted_classes[0]]
+                                else:
+                                    current_prediction = "?"
+                            except Exception as e:
+                                print(f"Prediction error: {e}")
+                                current_prediction = "અ"
+                                confidence = 0.8
+                        else:
+                            # Demo mode with dummy predictions
+                            current_prediction = "અ"
+                            confidence = 0.8
+
+                        # Stabilize predictions using a buffer
+                        prediction_buffer.append(current_prediction)
+                        if len(prediction_buffer) > buffer_size:
+                            prediction_buffer.pop(0)
+                        
+                        # Get the most frequent prediction in the buffer
+                        if prediction_buffer:
+                            stable_pred = max(set(prediction_buffer), key=prediction_buffer.count)
+                            if stable_pred != current_stable_prediction:
+                                current_stable_prediction = stable_pred
+                        
+                        # Draw the hand landmarks on the image
+                        mp_drawing.draw_landmarks(
+                            image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                            mp_drawing_styles.get_default_hand_landmarks_style(),
+                            mp_drawing_styles.get_default_hand_connections_style())
             
             # Convert OpenCV image to PIL for text rendering
             pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
@@ -178,9 +204,15 @@ def generate_frames():
             image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
 
             ret, buffer = cv2.imencode('.jpg', image)
-            image = buffer.tobytes()
+            if not ret:
+                print("Failed to encode frame")
+                continue
+                
+            image_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + image + b'\r\n')
+                   b'Content-Type: image/jpeg\r\n\r\n' + image_bytes + b'\r\n')
+    
+    cap.release()
 
 # Routes
 @app.route('/')
@@ -238,4 +270,6 @@ def clear_text():
     return jsonify({'status': 'success', 'text': current_text})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    # Use PORT environment variable if available (for Render)
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False)

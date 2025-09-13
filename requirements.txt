@@ -1,6 +1,4 @@
 
-We are given a list of packages and versions. We need to format it as a requirements.txt file for GitHub.
-The list provided is:
 
 absl-py==1.4.0
 astunparse==1.6.3
@@ -62,3 +60,4 @@ numpy
 pandas
 tensorflow
 pillow
+

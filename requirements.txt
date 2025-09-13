@@ -1,4 +1,8 @@
-﻿absl-py==1.4.0
+
+We are given a list of packages and versions. We need to format it as a requirements.txt file for GitHub.
+The list provided is:
+
+absl-py==1.4.0
 astunparse==1.6.3
 attrs==22.2.0
 cachetools==5.3.0
@@ -51,11 +55,10 @@ typing_extensions==4.5.0
 urllib3==1.26.15
 Werkzeug==2.2.3
 wrapt==1.15.0
-flask 
-opencv-python 
+flask
+opencv-python
 mediapipe
 numpy
 pandas
 tensorflow
 pillow
-
